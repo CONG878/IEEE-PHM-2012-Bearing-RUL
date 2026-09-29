@@ -130,8 +130,7 @@ V signal → column 6
 두 방향의 진동 신호를 다음과 같이 결합한다.
 
 $$
-a_{\mathrm{vector}}(t)
-=
+a_{\mathrm{vector}}(t) =
 \sqrt{a_H(t)^2+a_V(t)^2}
 $$
 
