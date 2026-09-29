@@ -1,17 +1,17 @@
-﻿# 01_Generate_Features
+﻿# 01_Feature Generation
 
 ---
 
 ## 1. 단계 개요
 
-01단계 **Generate_Features**는 IEEE PHM 2012 Bearing Dataset의 원시 센서 파일을 읽어 개별 측정 시점 단위의 **Base Feature Dataset**으로 변환하는 단계이다.
+01단계 **Feature Generation**은 IEEE PHM 2012 Bearing Dataset의 원시 센서 파일을 읽어 개별 측정 시점 단위의 **Base Feature Dataset**으로 변환하는 단계이다.
 
 전체 데이터 처리 흐름에서 01단계의 위치는 다음과 같다.
 
 ```text
 Sensor Dataset
       ↓
-01 Generate_Features
+01 Feature Generation
       ↓
 Base Feature Dataset
       ↓

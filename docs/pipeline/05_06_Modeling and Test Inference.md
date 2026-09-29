@@ -1,4 +1,4 @@
-﻿# 05_06_Modeling_and_Test_Inference
+﻿# 05_06_Modeling and Test Inference
 
 ---
 

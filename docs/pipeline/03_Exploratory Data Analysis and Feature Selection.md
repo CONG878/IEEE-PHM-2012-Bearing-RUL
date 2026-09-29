@@ -1,4 +1,4 @@
-﻿# 03_EDA_and_Feature_Selection
+﻿# 03_Exploratory Data Analysis and Feature Selection
 
 ---
 
