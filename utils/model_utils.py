@@ -859,6 +859,218 @@ def predict_lobo_test_endpoints(
 
     return result
 
+def predict_selected_lobo_test_endpoints(
+    bundles: dict[str, ModelBundle],
+    algorithm_by_bearing: dict[str, str],
+    endpoints: pd.DataFrame,
+    bearing_col: str = "bearing",
+    time_col: str = "elapsed_sec",
+) -> tuple[pd.DataFrame, list[str]]:
+    """
+    Predict Test endpoints using the selected algorithm for each LOBO model.
+
+    Each LOBO model is identified by its held-out bearing. The algorithm
+    selected for that held-out bearing determines which ModelBundle supplies
+    the model.
+
+    All selected LOBO models are applied to every Test endpoint.
+
+    Parameters
+    ----------
+    bundles : dict[str, ModelBundle]
+        Algorithm-specific ModelBundle objects.
+
+        Example:
+            {
+                "RandomForest": rf_bundle,
+                "CatBoost": catboost_bundle,
+            }
+
+    algorithm_by_bearing : dict[str, str]
+        Mapping from LOBO held-out bearing to the algorithm whose model
+        should occupy that LOBO model slot.
+
+    endpoints : pd.DataFrame
+        One final observed endpoint row per Test bearing.
+
+    bearing_col : str, default="bearing"
+        Bearing identifier column.
+
+    time_col : str, default="elapsed_sec"
+        Elapsed-time column.
+
+    Returns
+    -------
+    tuple[pd.DataFrame, list[str]]
+        Prediction table and the selected algorithm corresponding to each
+        ordered LOBO model column.
+
+        Prediction columns are named:
+
+            predicted_RUL_norm_model_0
+            predicted_RUL_norm_model_1
+            ...
+
+        The returned algorithm list follows the same model-column order.
+
+    Raises
+    ------
+    ValueError
+        If bundles have inconsistent LOBO fold definitions, schemas,
+        missing algorithm selections, or invalid predictions.
+    """
+    if not bundles:
+        raise ValueError("At least one ModelBundle is required.")
+
+    if not isinstance(algorithm_by_bearing, dict):
+        raise TypeError("algorithm_by_bearing must be a dict.")
+
+    # ------------------------------------------------------------------
+    # Validate bundle contracts
+    # ------------------------------------------------------------------
+
+    for algorithm, bundle in bundles.items():
+        if not isinstance(bundle, ModelBundle):
+            raise TypeError(
+                f"Bundle for {algorithm!r} is not a valid ModelBundle."
+            )
+
+        _validate_model_bundle(bundle)
+
+    reference_algorithm = next(iter(bundles))
+    reference_bundle = bundles[reference_algorithm]
+
+    if not reference_bundle.models:
+        raise ValueError("ModelBundle contains no trained models.")
+
+    reference_bearings = [
+        fold.held_out_bearing
+        for fold in reference_bundle.fold_metadata
+    ]
+
+    for algorithm, bundle in bundles.items():
+        bundle_bearings = [
+            fold.held_out_bearing
+            for fold in bundle.fold_metadata
+        ]
+
+        if bundle_bearings != reference_bearings:
+            raise ValueError(
+                "LOBO fold ordering mismatch between algorithm bundles: "
+                f"{reference_algorithm!r} vs {algorithm!r}."
+            )
+
+        if bundle.feature_columns != reference_bundle.feature_columns:
+            raise ValueError(
+                "Feature schema mismatch between algorithm bundles: "
+                f"{reference_algorithm!r} vs {algorithm!r}."
+            )
+
+        if bundle.target_column != reference_bundle.target_column:
+            raise ValueError(
+                "Target schema mismatch between algorithm bundles: "
+                f"{reference_algorithm!r} vs {algorithm!r}."
+            )
+
+    # ------------------------------------------------------------------
+    # Validate algorithm selection
+    # ------------------------------------------------------------------
+
+    missing_bearings = set(reference_bearings) - set(algorithm_by_bearing)
+
+    if missing_bearings:
+        raise ValueError(
+            "Algorithm selection is missing LOBO bearings: "
+            f"{sorted(missing_bearings)}"
+        )
+
+    unknown_bearings = set(algorithm_by_bearing) - set(reference_bearings)
+
+    if unknown_bearings:
+        raise ValueError(
+            "Algorithm selection contains unknown LOBO bearings: "
+            f"{sorted(unknown_bearings)}"
+        )
+
+    unknown_algorithms = {
+        algorithm
+        for algorithm in algorithm_by_bearing.values()
+        if algorithm not in bundles
+    }
+
+    if unknown_algorithms:
+        raise ValueError(
+            "Algorithm selection references unavailable bundles: "
+            f"{sorted(unknown_algorithms)}"
+        )
+
+    # ------------------------------------------------------------------
+    # Validate endpoints
+    # ------------------------------------------------------------------
+
+    assert_required_columns(
+        endpoints,
+        [bearing_col, time_col, *reference_bundle.feature_columns],
+    )
+
+    if endpoints.empty:
+        raise ValueError("Test endpoints must not be empty.")
+
+    if endpoints[bearing_col].isna().any():
+        raise ValueError(
+            f"'{bearing_col}' contains missing values."
+        )
+
+    if endpoints[bearing_col].duplicated().any():
+        raise ValueError(
+            "Test endpoints must contain exactly one row per bearing."
+        )
+
+    if not pd.api.types.is_numeric_dtype(endpoints[time_col]):
+        raise TypeError(f"'{time_col}' must be numeric.")
+
+    time_values = endpoints[time_col].to_numpy(dtype=float)
+
+    if not np.isfinite(time_values).all():
+        raise ValueError(
+            f"'{time_col}' contains NaN or Inf values."
+        )
+
+    if (time_values < 0).any():
+        raise ValueError(
+            f"'{time_col}' must contain non-negative values."
+        )
+
+    # ------------------------------------------------------------------
+    # Selected LOBO inference
+    # ------------------------------------------------------------------
+
+    result = endpoints.copy().reset_index(drop=True)
+    X_test = result[reference_bundle.feature_columns]
+
+    selected_algorithms = []
+
+    for model_index, held_out_bearing in enumerate(reference_bearings):
+        algorithm = algorithm_by_bearing[held_out_bearing]
+        bundle = bundles[algorithm]
+
+        model = bundle.models[model_index]
+
+        raw_prediction = model.predict(X_test)
+
+        prediction = _validate_prediction(
+            raw_prediction,
+            expected_length=len(result),
+        )
+
+        result[
+            f"predicted_RUL_norm_model_{model_index}"
+        ] = prediction
+
+        selected_algorithms.append(algorithm)
+
+    return result, selected_algorithms
+
 
 # =============================================================================
 # 5. Experimental RUL Post-Calibration
